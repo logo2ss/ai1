@@ -21,7 +21,6 @@ from dataclasses import asdict, dataclass, fields  # noqa: F401
 
 @dataclass
 class FaceSwapSettings:
-    mode: str = "natural"  # "pure": preserve all aligned face pixels; adapt surroundings only
     blend_strength: float = 1.0  # weight of the gradient-domain (Poisson) correction
     color_match: float = 0.9  # 0..1 skin-tone adaptation to the target
     lighting_match: float = 0.7  # 0..1 transfer of target shading (direction, shadows)
@@ -45,9 +44,6 @@ class FaceSwapSettings:
                 if isinstance(cur, bool):
                     v = v.strip().lower() in ("1", "true", "yes", "on") if isinstance(v, str) else bool(v)
                 setattr(s, k, type(cur)(v))
-        if s.mode not in ("natural", "pure"):
-            from ..errors import InvalidInputError
-            raise InvalidInputError("Face mode must be natural or pure.")
         return s
 
     def to_dict(self) -> dict:

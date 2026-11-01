@@ -12,7 +12,7 @@ import pytest
 from conftest import has_model, load, needs_depth, needs_testdata
 
 needs_compat = pytest.mark.skipif(
-    not (has_model("face-detector-yunet") and has_model("face-landmarks-lbf")), reason="compat face models not installed"
+    not (has_model("face-detector-yunet") and (has_model("face-mesh-onnx") or has_model("face-landmarks-lbf"))), reason="compat face models not installed"
 )
 
 
@@ -28,7 +28,7 @@ def _ellipse(shape, cx, cy, rx, ry):
 @needs_testdata
 @needs_compat
 @pytest.mark.parametrize("variant", [
-    pytest.param("gray", marks=pytest.mark.xfail(reason="QA 06:20: colour leaks into B&W targets (p99 chroma 0.068) - reported to F2", strict=False)),
+    "gray",
     "rgba_alpha_kept",
 ])
 def test_qa_compat_face_swap_on_grayscale_and_transparent_targets(variant):

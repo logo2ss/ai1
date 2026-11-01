@@ -17,3 +17,16 @@ def test_area_does_not_borrow_pixels_outside_source_selection():
     assert any('does not fully cover' in w for w in rep['warnings'])
     assert np.array_equal(out[:10],dst[:10])
     assert out[60,60].mean() > 0.4
+
+
+def test_transformed_cutout_has_no_dark_or_background_colour_fringe():
+    from lumen_engine.region.swap import _warp_foreground
+    fg=np.full((60,80,3),(.9,.5,.2),np.float32)
+    alpha=np.zeros((60,80),np.float32);alpha[10:50,:40]=1
+    # Intentionally hostile magenta immediately outside the cutout.
+    fg[alpha==0]=(1,0,1)
+    transform=np.array([[.65,0,2.37],[0,.65,3.63],[0,0,1]],np.float64)
+    color,a=_warp_foreground(fg,alpha,transform,(60,80),.65)
+    edge=(a>.03)&(a<.97)
+    assert edge.sum()>30
+    assert np.abs(color[edge]-(.9,.5,.2)).max() < 1e-4

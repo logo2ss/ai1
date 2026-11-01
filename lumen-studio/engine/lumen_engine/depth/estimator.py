@@ -42,11 +42,53 @@ def _normalize(d: np.ndarray) -> np.ndarray:
     return np.clip((d - lo) / max(hi - lo, 1e-6), 0, 1).astype(np.float32)
 
 
+def _align_relative_depth(pred: np.ndarray, reference: np.ndarray) -> tuple[np.ndarray, float]:
+    """Robust positive scale/shift alignment; reject inconsistent crop geometry.
+
+    Relative-depth networks have independent scale/offset for every view.
+    Negative or near-constant fits must never reverse surface ordering.
+    """
+    x, y = pred.ravel(), reference.ravel()
+    stride = max(1, len(x)//12000)
+    x, y = x[::stride].astype(np.float64), y[::stride].astype(np.float64)
+    valid = np.isfinite(x) & np.isfinite(y)
+    x, y = x[valid], y[valid]
+    if len(x) < 16 or np.std(x) < 1e-6 or np.std(y) < 1e-6:
+        return reference.copy(), 0.0
+    # Keep a small microphone, clipped highlight or crop hallucination from
+    # dominating the covariance before robust fitting even starts.
+    xl, xh = np.percentile(x, [5,95])
+    yl, yh = np.percentile(y, [2,98])
+    central = (x >= xl) & (x <= xh) & (y >= yl) & (y <= yh)
+    if central.sum() >= 16:
+        x, y = x[central], y[central]
+    xm, ym = np.median(x), np.median(y)
+    xs, ys = x-xm, y-ym
+    corr = float(xs @ ys / max(np.linalg.norm(xs)*np.linalg.norm(ys), 1e-12))
+    if corr < 0.5:
+        return reference.copy(), 0.0
+    A = np.stack([xs, np.ones_like(xs)], 1)
+    coef = np.linalg.lstsq(A, ys, rcond=None)[0]
+    for _ in range(3):
+        residual = ys-A@coef
+        scale = max(1e-6, 1.4826*np.median(np.abs(residual-np.median(residual))))
+        weight = np.minimum(1., 1.5*scale/np.maximum(np.abs(residual), 1e-9))
+        coef = np.linalg.lstsq(A*weight[:,None]**0.5, ys*weight**0.5, rcond=None)[0]
+    if not np.isfinite(coef).all() or coef[0] <= 0:
+        return reference.copy(), 0.0
+    aligned = (pred-xm)*coef[0]+coef[1]+ym
+    # Poor contextual crops add no reliable detail. Do not amplify their noise.
+    error = np.median(np.abs(ys-A@coef))/max(float(np.percentile(y,95)-np.percentile(y,5)),1e-6)
+    confidence = float(np.clip((corr-0.5)/0.4,0,1)*np.clip(1-error/0.2,0,1))
+    return aligned.astype(np.float32), confidence
+
+
 def _predict(sess, rgb: np.ndarray, size: int, tta: bool) -> np.ndarray:
     h, w = rgb.shape[:2]
     d = _infer(sess, rgb, size)
     if tta:
-        d = 0.5 * (d + _infer(sess, rgb[:, ::-1].copy(), size)[:, ::-1])
+        flipped, confidence = _align_relative_depth(_infer(sess, rgb[:, ::-1].copy(), size)[:, ::-1], d)
+        d = d + 0.5 * confidence * (flipped-d)
     return cv2.resize(d, (w, h), interpolation=cv2.INTER_CUBIC)
 
 
@@ -114,9 +156,10 @@ def estimate_depth(rgb: np.ndarray, model_id: str = "depth-anything-v2-small", d
                 crop = work[y0 : y0 + ch, x0 : x0 + cw]
                 d = _predict(sess, crop, size, tta=False)
                 g = glob[y0 : y0 + ch, x0 : x0 + cw]
-                A = np.stack([d.ravel(), np.ones(d.size)], 1)
-                coef, *_ = np.linalg.lstsq(A, g.ravel(), rcond=None)
-                d = d * coef[0] + coef[1]
+                d, confidence = _align_relative_depth(d, g)
+                # Keep the global surface ordering in ambiguous/flat crops.
+                limit = max(1e-5, 0.12*float(np.percentile(glob,99)-np.percentile(glob,1)))
+                d = g + confidence*np.clip(d-g, -limit, limit)
                 wy = np.hanning(ch + 2)[1:-1]
                 wx = np.hanning(cw + 2)[1:-1]
                 wgt = np.outer(wy, wx).astype(np.float32) + 1e-3
@@ -130,8 +173,9 @@ def estimate_depth(rgb: np.ndarray, model_id: str = "depth-anything-v2-small", d
     else:
         fused = glob
     if full_work is not None:  # back to the global pass resolution
+        correction = fused-glob
         work, glob = full_work
-        fused = cv2.resize(fused, (glob.shape[1], glob.shape[0]), interpolation=cv2.INTER_CUBIC)
+        fused = glob + cv2.resize(correction, (glob.shape[1], glob.shape[0]), interpolation=cv2.INTER_CUBIC)
         wh, ww = work.shape[:2]
     disp = _normalize(fused)
     if (wh, ww) != (h, w):

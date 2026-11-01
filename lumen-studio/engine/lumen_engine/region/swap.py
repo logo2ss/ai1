@@ -115,6 +115,19 @@ def _warp(img: np.ndarray, M: np.ndarray, shape: tuple[int, int], interp=cv2.INT
     return cv2.warpPerspective(img, M, (w, h), flags=interp, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
 
 
+def _warp_foreground(fg, alpha, M, shape, scale):
+    """Resample premultiplied colour so background/black cannot fringe edges."""
+    premult = fg.astype(np.float32)*alpha[...,None]
+    a = alpha.astype(np.float32)
+    if scale < .8:
+        sigma = .45/max(scale,1e-6)
+        premult, a = gaussian(premult,sigma), gaussian(a,sigma)
+    a = np.clip(_warp(a,M,shape),0,1)
+    color = _warp(premult,M,shape)
+    color = np.where(a[...,None]>1e-5, color/np.maximum(a[...,None],1e-5),0)
+    return np.clip(color,0,1).astype(np.float32),a
+
+
 def _linear_scale(M: np.ndarray, at: np.ndarray) -> float:
     """Local isotropic scale of a homography at point ``at``."""
     x, y = at
@@ -246,6 +259,8 @@ def insert_region(
         src_pre = gaussian(src_fg, 0.45 / k)
     warped = np.clip(_warp(src_pre.astype(np.float32), M, (H, W)), 0, 1)
     walpha = np.clip(_warp(src_alpha.astype(np.float32), M, (H, W), cv2.INTER_LINEAR), 0, 1)
+    if not area_mode:
+        warped, walpha = _warp_foreground(src_fg, src_alpha, M, (H,W), k)
     if area_mode:
         # content fills the destination shape; edges follow the destination's own image edges
         valid = _warp(smask, M, (H, W), cv2.INTER_LINEAR) > 0.99

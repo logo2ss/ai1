@@ -290,9 +290,6 @@ def swap_face(
     Returns (result_image, report, debug_images).
     """
     s = settings or FaceSwapSettings()
-    if s.mode == "pure":
-        from .pure import swap_pure
-        return swap_pure(src_img, src_face, dst_img, dst_face, s, progress)
     prog = progress or (lambda *_: None)
     report = {"settings": asdict(s)}
     analysis_report = analyze_pair(src_img, src_face, dst_img, dst_face)
@@ -356,7 +353,7 @@ def swap_face(
     warped_c = None
     if APPEARANCE_MODE == "sh" and fs >= tv("small_face_px", 56):  # tiny faces: the legacy transfer is more robust
         try:
-            warped_c, app_rep = _appearance_sh(src_img, dst_img, warped, target, dst_pts, src_support, feat, roi, fs, s, geo)
+            warped_c, app_rep = _appearance_sh(src_img, dst_img, warped, target, dst_pts, src_support * np.clip(skin_both, 0, 1), feat, roi, fs, s, geo)
             report["lighting"] = app_rep
         except (ValueError, np.linalg.LinAlgError) as exc:  # too little skin, degenerate mesh...
             report["lighting"] = {"method": "legacy", "reason": str(exc)}
@@ -371,10 +368,26 @@ def swap_face(
             keep = gaussian(feat, max(1.0, fs * 0.01))[..., None] * 0.5
             warped_c = cc * (1 - keep) + (warped_c + (cc - warped_c) * 0.5) * keep
 
+    # Match the transition to surrounding skin using only common skin samples.
+    # Keep eyes/lips and the face core out of this boundary correction.
+    if s.color_match > 0:
+        band_weight = skin_both * (soft > 0.05) * (soft < 0.9) * (1 - feat)
+        if band_weight.sum() > 20:
+            lab_w, lab_t = color.rgb_to_lab(warped_c), color.rgb_to_lab(target)
+            delta = normalized_blur(lab_t - lab_w, band_weight, max(2.0, fs * 0.1))
+            delta[..., 0] = np.clip(delta[..., 0], -8, 8)
+            delta[..., 1:] = np.clip(delta[..., 1:], -5, 5)
+            edge_weight = np.clip((0.92 - soft) / 0.6, 0, 1) * (1 - feat)
+            warped_c = color.lab_to_rgb(lab_w + delta * (edge_weight * s.color_match)[..., None])
+
     prog(0.6, "Matching camera characteristics")
     sharp_report = noise_report = None
     if s.match_sharpness:
-        warped_c, sharp_report = analysis.match_sharpness(warped_c, target, skin_w)
+        matched, sharp_report = analysis.match_sharpness(warped_c, target, skin_w)
+        # Skin camera statistics are not evidence that eyes, lips and brows
+        # should be softened. Preserve their source detail after relighting.
+        protected_detail = np.clip(gaussian(feat, max(0.8, fs*0.005)),0,1)[...,None]
+        warped_c = matched*(1-protected_detail)+warped_c*protected_detail
     # skin micro-texture: match the energy of fine detail (pores, fine wrinkles) so an airbrushed or
     # upscaled face does not look pasted into a textured photo. Missing detail is borrowed from the
     # target's own skin at the finest scale (identity-neutral: pores, sensor noise, JPEG texture);
@@ -387,7 +400,7 @@ def swap_face(
         e_s, e_t = float(np.sqrt((det_s[sw_] ** 2).mean())), float(np.sqrt((det_t[sw_] ** 2).mean()))
         gain = float(np.clip(e_t / max(e_s, 1e-5), tv("texture_gain_lo", 0.7), tv("texture_gain_hi", 1.5)))
         if gain < 0.95:
-            warped_c = np.clip(warped_c + det_s * (gain - 1) * 0.8, 0, 1)
+            warped_c = np.clip(warped_c + det_s * (gain - 1) * 0.8 * np.clip(skin_both*(1-feat),0,1)[...,None], 0, 1)
         elif e_t > e_s * 1.05:
             # own detail up to +25 %, the remaining energy from the target's skin texture
             own = min(gain, 1.25)
@@ -436,6 +449,14 @@ def swap_face(
     supp = cv2.dilate((soft > 0.002).astype(np.uint8), np.ones((3, 3), np.uint8)).astype(np.float32)[..., None]
     fg = fg * supp + target * (1 - supp)
     out_roi = blend.multiband_blend(fg, target, soft)
+    # A monochrome target must remain monochrome. RGB colour matching and
+    # feature protection otherwise leave coloured eyes/skin in old B&W photos.
+    if np.percentile(np.ptp(target, axis=-1), 99) < 1/255:
+        out_roi = np.repeat(color.luminance(out_roi)[...,None], 3, axis=-1)
+    # Pyramid levels must not tint pixels outside the edit (especially on
+    # monochrome targets and beside source occluders).
+    local_weight = np.clip((soft-.01)/.02,0,1)[...,None]
+    out_roi = np.where(local_weight > 0, target+local_weight*(out_roi-target), target)
     result = dst_img.copy()
     result[ry0:ry1, rx0:rx1] = out_roi
 

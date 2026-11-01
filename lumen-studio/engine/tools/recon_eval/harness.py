@@ -116,7 +116,13 @@ def reconstruct_cached(sdir: Path, rgb: np.ndarray, settings: dict, force: bool)
     from lumen_engine.recon.scene import ReconSettings, reconstruct
 
     ab = os.environ.get("LUMEN_RECON_AB", "")  # scene.py development A/B switches are part of the cache key
-    key = hashlib.sha1(rgb.tobytes()[:: 97] + json.dumps(settings, sort_keys=True).encode() + ab.encode()).hexdigest()[:16]
+    import lumen_engine
+    engine_root = Path(lumen_engine.__file__).parent
+    source_hash = hashlib.sha256()
+    for source_file in sorted(engine_root.rglob("*.py")):
+        source_hash.update(str(source_file.relative_to(engine_root)).encode())
+        source_hash.update(source_file.read_bytes())
+    key = hashlib.sha1(rgb.tobytes()[:: 97] + json.dumps(settings, sort_keys=True).encode() + ab.encode() + source_hash.digest()).hexdigest()[:16]
     meta_p = sdir / "recon.json"
     if not force and meta_p.is_file() and all((sdir / f).is_file() for f in FILES.values()):
         meta = json.loads(meta_p.read_text())
@@ -187,7 +193,9 @@ def scene_env(R, sc, tm, fov: float, tb=None):
     """Far-environment panorama (D3's recon.environment) when this renderer supports one."""
     if not _accepts_env(R) or not hasattr(R, "scene_environment_texture"):
         return None
-    return R.scene_environment_texture(sc, tm, fov, tb)
+    if "tex_bg" in inspect.signature(R.scene_environment_texture).parameters:
+        return R.scene_environment_texture(sc, tm, fov, tb)
+    return R.scene_environment_texture(sc, tm, fov)
 
 
 def render_view(R, sc, tm, tb, tk, cam: Cam, W: int, H: int, fov: float, zfar: float, margin_fade: float = 0.35, env=None):

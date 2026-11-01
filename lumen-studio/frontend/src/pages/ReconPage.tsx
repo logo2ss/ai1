@@ -11,7 +11,6 @@ import { ErrorBoundary } from "../components/ErrorBoundary";
 import { CpuRendererNotice, RendererSelect } from "../components/RendererSelect";
 import BodyEditor from "./BodyEditor";
 import Body3D from "./Body3D";
-import Person3D from "./Person3D";
 
 interface ReconResult {
   scene: string;
@@ -48,7 +47,7 @@ export default function ReconPage() {
   const [vo, setVo] = useState<ViewerOptions>({ fov: 60, zfar: 8, mode: "color", pointCloud: false, showBackground: true, constrain: true, controls: "orbit", motion: "none", marginFade: 0.35 });
   const [status, setStatus] = useState({ outside: false, distance: 0 });
   const viewer = useRef<ViewerHandle>(null);
-  const [tool, setTool] = useState<"3d" | "body" | "body3d" | "person3d">("3d");
+  const [tool, setTool] = useState<"3d" | "body" | "body3d">("3d");
   const rend = useRenderer();
   const setV = <K extends keyof ViewerOptions>(k: K, v: ViewerOptions[K]) => setVo((o) => ({ ...o, [k]: v }));
 
@@ -147,9 +146,9 @@ export default function ReconPage() {
           <Box className="w-5 h-5 text-accent" />
           <h1 className="font-semibold">3D Reconstruction</h1>
           <div className="flex rounded-md bg-panel border border-line p-0.5 ml-3" data-testid="recon-tool">
-            {(["3d", "person3d", "body3d", "body"] as const).map((t) => (
+            {(["3d", "body3d", "body"] as const).map((t) => (
               <button key={t} onClick={() => setTool(t)} className={cx("px-3 h-7 rounded text-[12px]", tool === t ? "bg-accent/20 text-ink ring-1 ring-accent/40" : "text-muted hover:text-ink")}>
-                {t === "3d" ? "3D scene" : t === "person3d" ? "Person 3D" : t === "body3d" ? "Body 3D" : "Body proportions"}
+                {t === "3d" ? "3D scene" : t === "body3d" ? "Body 3D" : "Body proportions"}
               </button>
             ))}
           </div>
@@ -164,7 +163,6 @@ export default function ReconPage() {
             </div>
           )}
         </header>
-        {tool === "person3d" && img && <div className="flex-1 min-h-0"><Person3D key={img.id} img={img} onFile={load} /></div>}
         {tool === "body" && img && (
           <div className="flex-1 min-h-0">
             <BodyEditor img={img} />

@@ -976,6 +976,18 @@ def _scene_grids(sc: SceneData, stride: int) -> _Grids:
     return g
 
 
+def _preview_detail_keep(fine: np.ndarray, coarse: np.ndarray, rows: np.ndarray, cols: np.ndarray) -> np.ndarray:
+    """Fine quads lost by conservative LOD cuts, retained around silhouettes.
+
+    Uniformly coarsening a cut mesh erases narrow limbs/rails and widens every
+    crack. Keep coarse interior geometry, but restore its fine boundary cells.
+    """
+    ri = np.searchsorted(rows, np.arange(fine.shape[0]), side="right")-1
+    ci = np.searchsorted(cols, np.arange(fine.shape[1]), side="right")-1
+    covered = coarse[np.ix_(ri, ci)] > 0
+    return np.ascontiguousarray((fine.astype(bool) & ~covered).astype(np.uint8))
+
+
 def _unproject(sc: SceneData, disp: np.ndarray, rows: np.ndarray, cols: np.ndarray, gw: int, gh: int, fov: float, zfar: float):
     h = sc.header
     shape = (rows.shape[0], cols.shape[0])
@@ -1186,6 +1198,8 @@ def render_scene(sc: SceneData, tex_main: MipTexture, tex_bg: MipTexture, tex_ba
             bh, bw = sc.back.shape
             keep_all = _keep_all(bh, bw)
             layers.append(("back", keep_all, sc.back, np.arange(bw) / (bw - 1.0), np.arange(bh) / (bh - 1.0), tex_back, 2 * (bh - 1) * (bw - 1)))
+    fine_verts = _scene_vertices(sc, fov, zfar, 1) if stride > 1 else None
+    fine_grid = _scene_grids(sc, 1) if stride > 1 else None
     tris = 0
     for li, (name, keep, disp, u, v, tex, nt) in enumerate(layers):
         SX, SY, IW = _project(verts[name], disp, R, P, s, W, H, NEAR_SCENE)
@@ -1193,6 +1207,16 @@ def render_scene(sc: SceneData, tex_main: MipTexture, tex_bg: MipTexture, tex_ba
         _run(_raster_grid, SX, SY, IW, disp, disp, disp, keep, u, v, bnd, BLOCK, W, H, f.nbands,
              li, _TIE_EPS, tex.area, 0.0, 0.0, 1, 1, f.gdepth, f.glayer, f.gu, f.gv, f.ga, f.gs, f.gr, dynamic=True)
         tris += nt
+        if fine_verts is not None and name in ("main", "bg"):
+            detail_keep = _preview_detail_keep(fine_verts["keep_"+name], keep, g.rows, g.cols)
+            if detail_keep.any():
+                fine_disp = sc.disp if name == "main" else sc.bg_disp
+                fx, fy, fw = _project(fine_verts[name], fine_disp, R, P, s, W, H, NEAR_SCENE)
+                bounds = _bounds(fx, fy, fw, detail_keep)
+                _run(_raster_grid, fx, fy, fw, fine_disp, fine_disp, fine_disp, detail_keep, fine_grid.u, fine_grid.v,
+                     bounds, BLOCK, W, H, f.nbands, li, _TIE_EPS, tex.area, 0., 0., 1, 1,
+                     f.gdepth, f.glayer, f.gu, f.gv, f.ga, f.gs, f.gr, dynamic=True)
+                tris += int(detail_keep.sum())*2
     out = np.empty((H, W, 3), np.uint8)
     mode = {"color": 0, "depth": 1, "layers": 2}.get(p.mode, 0)
     use_env = env is not None and p.environment
@@ -1350,7 +1374,10 @@ def scene_environment_texture(sc: SceneData, tex_main: MipTexture, fov: float, t
     """Far environment panorama derived from the scene (outpainted main texture + sky), as a texture."""
     from .environment import scene_environment
 
-    pano = scene_environment(sc.bg_disp if tex_bg is not None else sc.disp, (tex_bg or tex_main).rgb, sc.header, fov)
+    # Background disparity is sparse (-1 means absent, not sky). Use main
+    # depth outside completed regions rather than treating missing data as sky.
+    depth = np.where(sc.bg_disp >= -0.0801, sc.bg_disp, sc.disp) if tex_bg is not None else sc.disp
+    pano = scene_environment(depth, (tex_bg or tex_main).rgb, sc.header, fov)
     return MipTexture((np.clip(pano, 0, 1) * 255 + 0.5).astype(np.uint8))
 
 

@@ -400,32 +400,6 @@ def create_app(static_dir: str | None = None, token: str | None = None) -> FastA
 
         return {"job_id": jobs.submit("body3d", work)}
 
-    # ------------------------------------------------------------------ person on an empty background (CPU on every browser)
-    @app.post("/api/person3d")
-    async def person3d(request: Request):
-        from ..recon.person3d import Person3DSettings, build_person3d
-
-        body = await _json_body(request)
-        rgb, alpha = store.get(body["image_id"])
-        settings = Person3DSettings.from_dict(body.get("settings"))
-
-        def work(progress):
-            out = build_person3d(rgb, alpha, settings, progress)
-            return {"person": store.put_file(out["person"], ".npz"),
-                    "texture": store.put_file(out["texture"], ".png"),
-                    "matte": store.put_file(out["matte"], ".png"),
-                    "header": out["header"], "warnings": out["warnings"]}
-
-        return {"job_id": jobs.submit("person3d", work)}
-
-    @app.post("/api/person3d/render")
-    async def person3d_render(request: Request):
-        from ..recon.person_render import render_person_request
-
-        body = await _json_body(request)
-        data, info = await run_in_threadpool(render_person_request, body, store.file_path)
-        return _frame_response(data, info)
-
     # ------------------------------------------------------------------ 3D
     @app.post("/api/recon")
     async def recon(request: Request):

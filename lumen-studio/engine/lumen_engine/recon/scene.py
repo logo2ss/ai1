@@ -134,8 +134,9 @@ def reconstruct(rgb: np.ndarray, settings: ReconSettings | None = None, progress
     depth_src, _ = resize_max(rgb, 1600)
     # detail crops finer than ~1.25x the mesh resolution are averaged away (fast/balanced); 'high' keeps them all
     detail_side = None if s.quality == "high" or _ab("no_detail_cap") else int(1.25 * work_side)
+    depth_info: dict = {}
     try:
-        disp_full = estimate_depth(depth_src, s.model, detail=s.detail_fusion, detail_side=detail_side,
+        disp_full = estimate_depth(depth_src, s.model, detail=s.detail_fusion, detail_side=detail_side, info=depth_info,
                                    progress=lambda p: prog(0.02 + 0.28 * p, "Estimating depth"))
     except TypeError:  # estimator without the detail cap
         disp_full = estimate_depth(depth_src, s.model, detail=s.detail_fusion, progress=lambda p: prog(0.02 + 0.28 * p, "Estimating depth"))
@@ -143,8 +144,10 @@ def reconstruct(rgb: np.ndarray, settings: ReconSettings | None = None, progress
     from ..depth.estimator import refine_edges
 
     disp = refine_edges(work, disp)
-    disp = _sharpen_depth_edges(work, disp, thr)
-    sky = detect_sky(work, disp) if s.detect_sky else np.zeros((h, w), bool)
+    sky_hint = depth_info.get("sky_hint")
+    if sky_hint is not None:
+        sky_hint = cv2.resize(sky_hint, (w, h), interpolation=cv2.INTER_AREA)
+    sky = detect_sky(work, disp, hint=sky_hint) if s.detect_sky else np.zeros((h, w), bool)
     report["sky_fraction"] = round(float(sky.mean()), 3)
     d = disp.copy()
     d[sky] = SKY_DISP
@@ -162,6 +165,11 @@ def reconstruct(rgb: np.ndarray, settings: ReconSettings | None = None, progress
     else:
         fg, people, n_obj = np.zeros((h, w), bool), np.zeros((h, w), bool), 0
     report["foreground"] = {"people": bool(people.any()), "objects": int(n_obj), "fraction": round(float(fg.mean()), 3)}
+    # Fit floors/walls only after identifying subjects. A person's shirt or
+    # face can look locally planar but must retain its original relief.
+    protected = _dil(fg, max(2, round(0.006 * L))) | sky
+    d = _sharpen_depth_edges(work, d, thr, sky=sky, mask=~protected)
+    disp = np.where(sky, disp, d).astype(np.float32)
     r_in, r_halo, r_bleed = max(2, round(0.018 * L)), max(2, round(0.006 * L)), max(4, round(0.022 * L))
     # other depth edges: resolve blurred ramps into steps (never inside a person or object,
     # whose surface must stay in one piece - what is behind an arm is not in the background plate)
@@ -237,7 +245,7 @@ def reconstruct(rgb: np.ndarray, settings: ReconSettings | None = None, progress
     dmain_big = np.where(margin & ~ext_big, dbg_big, dmain_big).astype(np.float32)
     dmain_big[m : m + h, m : m + w] = d_main
     if m > 0:
-        big, plate_big, out_method = _outpaint(work, plate, dmain_big, m, ext_fg, fill_method, lambda p: prog(0.74 + 0.13 * p, "Extending beyond the frame"))
+        big, plate_big, out_method = _outpaint(work, plate, dmain_big, m, ext_fg, fill_method, lambda p: prog(0.74 + 0.13 * p, "Extending beyond the frame"), avoid=fg, sky=sky)
     else:
         big, plate_big, out_method = work.astype(np.float32).copy(), plate.copy(), "none"
     report["outpainting"] = out_method

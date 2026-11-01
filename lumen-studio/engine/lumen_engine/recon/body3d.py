@@ -57,10 +57,15 @@ def build_body3d(rgb: np.ndarray, mask: np.ndarray, settings: Body3DSettings | N
         raise NoFaceFoundError("No person was found in this photo.", hint="Use a photo where a person is clearly visible.")
     k = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
     binm = (lab == k).astype(np.uint8)
-    # fill holes (e.g. gaps between arm and torso stay open; enclosed specks are filled)
-    filled = binm.copy()
-    cv2.floodFill(filled, np.zeros((binm.shape[0] + 2, binm.shape[1] + 2), np.uint8), (0, 0), 2)
-    binm = np.where(filled == 2, 0, 1).astype(np.uint8) if filled[0, 0] == 2 else binm
+    # Fill only tiny enclosed segmentation specks. Flood-filling every hole
+    # turned real gaps between arms/legs into textured sheets of background.
+    from scipy import ndimage
+    holes, count = ndimage.label(binm == 0)
+    areas = np.bincount(holes.ravel())
+    boundary = np.unique(np.r_[holes[0], holes[-1], holes[:,0], holes[:,-1]])
+    fill = areas <= max(4, int(0.0003*binm.size))
+    fill[boundary] = False; fill[0] = False
+    binm = np.maximum(binm, fill[holes].astype(np.uint8))
     ys, xs = np.nonzero(binm)
     x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
     pad = int(0.03 * max(x1 - x0, y1 - y0))

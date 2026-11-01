@@ -19,13 +19,18 @@ export function ImageStage({
   const box = useRef<HTMLDivElement>(null);
   const [sz, setSz] = useState({ w: 0, h: 0 });
   useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    let active = true;
     const ro = new ResizeObserver(() => {
-      const r = box.current!.getBoundingClientRect();
+      // An already queued observer callback can run after a tool is unmounted.
+      if (!active || !el.isConnected) return;
+      const r = el.getBoundingClientRect();
       const s = Math.min(r.width / width, r.height / height);
       setSz({ w: width * s, h: height * s });
     });
-    ro.observe(box.current!);
-    return () => ro.disconnect();
+    ro.observe(el);
+    return () => { active = false; ro.disconnect(); };
   }, [width, height]);
   const toImg = (e: React.PointerEvent): [number, number] => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lumen-engine"
-version = "1.5.0"
+version = "1.4.1"
 description = "Local, offline image processing engine for Lumen Studio (face replacement, region swapping, single-image 3D reconstruction)."
 requires-python = ">=3.10,<3.13"
 license = { text = "MIT" }

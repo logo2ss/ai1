@@ -35,7 +35,6 @@ interface Analysis {
 }
 
 const DEFAULTS = {
-  mode: "natural" as "natural" | "pure",
   blend_strength: 1.0,
   color_match: 0.9,
   lighting_match: 0.7,
@@ -243,10 +242,6 @@ export default function FacePage() {
               <ArrowLeftRight className="w-4 h-4" /> Swap source and target
             </Button>
           </div>
-          <div className="p-4 border-b border-line space-y-2">
-            <Toggle label="Pure swap" checked={settings.mode === "pure"} onChange={v => set("mode", v ? "pure" : "natural")} hint="Keeps the source face shape, colour, lighting and texture after one similarity alignment. Only the surrounding skin and transition are adapted." />
-            {settings.mode === "pure" && <Notice kind="info">Pure swap preserves the whole source face, including its mouth. Colour, lighting, proportions and camera matching controls apply to Natural mode only.</Notice>}
-          </div>
           <Section title="Compatibility analysis">
             {!analysis && <div className="text-[12px] text-muted">{analyzing ? "Checking compatibility…" : "Load both images and select a face in each."}</div>}
             {analysis && (
@@ -277,7 +272,6 @@ export default function FacePage() {
               </>
             )}
           </Section>
-          {settings.mode === "natural" && <>
           <Section title="Blending">
             <Slider label="Blending strength (gradient domain)" value={settings.blend_strength} onChange={(v) => set("blend_strength", v)} hint="How strongly the seam is solved in the gradient domain (Poisson)." />
             <Slider label="Colour matching" value={settings.color_match} onChange={(v) => set("color_match", v)} hint="Adapts skin tone and colour distribution to the target." />
@@ -294,7 +288,6 @@ export default function FacePage() {
               <RotateCcw className="w-3.5 h-3.5" /> Reset to defaults
             </Button>
           </Section>
-          </>}
           {result && (
             <Section title="Result quality">
               <Stat label="Seam visibility (1 = invisible)" value={result.report?.quality?.seam_visibility ?? "—"} />

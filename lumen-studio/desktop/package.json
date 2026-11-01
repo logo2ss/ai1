@@ -1,7 +1,7 @@
 {
   "name": "lumen-studio",
   "productName": "Lumen Studio",
-  "version": "1.5.0",
+  "version": "1.4.1",
   "description": "Local, offline face replacement, region swapping and single-image 3D reconstruction.",
   "main": "main.js",
   "license": "MIT",

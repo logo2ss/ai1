@@ -49,8 +49,6 @@ with sync_playwright() as p:
     page.locator('input[type=file]').nth(1).set_input_files(small('faces/obama.jpg'))
     result=run_button('Replace face','/api/face/swap');completed.append('Natural face swap')
     assert page.request.get(f"{BASE}/api/images/{result['image_id']}/export?format=png&token=t").ok
-    page.get_by_text('Pure swap',exact=True).click()
-    result=run_button('Regenerate','/api/face/swap');assert result['report']['pure']['max_face_change']==0;completed.append('Pure swap + PNG export')
     page.screenshot(path=str(OUT/'face-no-webgl.png'))
     page.get_by_test_id('nav-region').click()
     page.locator('input[type=file]').nth(0).set_input_files(small('scenes/fruits.jpg'))
@@ -61,17 +59,14 @@ with sync_playwright() as p:
             a=2*math.pi*i/12;page.mouse.click(box['x']+box['width']*(0.5+0.18*math.cos(a)),box['y']+box['height']*(0.5+0.18*math.sin(a)))
     result=run_button('Swap','/api/region/swap');assert set(result)=={'a','b'};completed.append('Region swap both ways from drawn selections')
     page.get_by_test_id('result-a').wait_for(timeout=120000);page.screenshot(path=str(OUT/'region-no-webgl.png'))
-    page.get_by_test_id('nav-recon').click();page.locator('input[type=file]').first.set_input_files(small('scenes/home.jpg'))
+    page.get_by_test_id('nav-recon').click()
+    assert page.get_by_test_id('recon-tool').get_by_role('button').all_text_contents()==['3D scene','Body 3D','Body proportions']
+    assert page.get_by_role('button',name='Person 3D',exact=True).count()==0
+    page.locator('input[type=file]').first.set_input_files(small('scenes/home.jpg'))
     result=run_button('Reconstruct 3D scene','/api/recon');frame('viewer');completed.append('Scene CPU reconstruction/render')
     viewer=page.get_by_test_id('viewer');box=viewer.bounding_box();page.mouse.move(box['x']+box['width']*.9,box['y']+box['height']*.5);page.mouse.down();page.mouse.move(box['x']+box['width']*.1,box['y']+box['height']*.5,steps=20);page.mouse.up();page.wait_for_timeout(1200)
     page.screenshot(path=str(OUT/'scene-no-webgl.png'))
     page.locator('input[type=file]').first.set_input_files(small('faces/obama.jpg'))
-    page.get_by_role('button',name='Person 3D',exact=True).click();result=run_button('Build Person 3D','/api/person3d');frame('person-viewer')
-    for text in ('-50°','0°','+50°'):
-        with page.expect_response(lambda r:'/api/person3d/render' in r.url and r.status==200,timeout=120000):page.get_by_role('button',name=text,exact=True).click()
-        page.wait_for_timeout(300)
-    viewer=page.get_by_test_id('person-viewer');viewer.focus();page.keyboard.down('w');page.wait_for_timeout(150);page.keyboard.up('w');page.keyboard.press('r');page.mouse.wheel(0,-80)
-    completed.append('Person CPU -50/0/+50, WASD, zoom/reset');page.screenshot(path=str(OUT/'person-no-webgl.png'))
     page.get_by_role('button',name='Body 3D',exact=True).click();run_button('Build 3D body model','/api/body3d');frame('body-viewer');completed.append('Body 3D CPU build/render')
     page.get_by_role('button',name='Body proportions',exact=True).click()
     width=page.get_by_role('slider',name='Overall width',exact=True);width.wait_for(timeout=120000)

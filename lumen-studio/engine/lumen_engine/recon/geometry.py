@@ -75,7 +75,7 @@ def detect_sky(rgb: np.ndarray, disp: np.ndarray, hint: np.ndarray | None = None
         sky |= extra
     if sky.mean() < 0.01:
         return np.zeros_like(sky)
-    sky = ndimage.binary_closing(sky, iterations=2) & far
+    sky = (sky | ndimage.binary_closing(sky, iterations=2)) & far
     # mixed pixels along the skyline (leaves, branches, roof edges) that are coloured like the
     # adjacent sky go with the sky; left on the object they would float with it as a bright halo
     rr = max(2, int(round(0.004 * max(h, w))))
@@ -309,12 +309,15 @@ def flatten_planes(disp: np.ndarray, planes: list[Plane], strength: float = 1.0,
         # small pockets enclosed by the plane that look *farther* than it are reflections or
         # see-through noise (glass tables, polished floors): a solid surface has no holes
         m = m | (_dil(m, max(2, int(round(0.012 * max(h, w))))) & close)
-        filled = _fill_small_holes(m, 0.006 * h * w)
+        # Enclosed far pockets in a well-supported floor are frequently
+        # reflections. Keep foreground bumps and wall openings untouched.
+        pocket_limit = (0.04 if p.kind == "floor" and p.support >= 0.08 else 0.006) * h * w
+        filled = _fill_small_holes(m, pocket_limit)
         pocket = filled & ~(m & close) & (out < pd)
         if pocket.any():
             n, lab, stats, _ = cv2.connectedComponentsWithStats(pocket.astype(np.uint8), connectivity=4)
             small = np.zeros(n, bool)
-            small[1:] = stats[1:, cv2.CC_STAT_AREA] <= 0.006 * h * w
+            small[1:] = stats[1:, cv2.CC_STAT_AREA] <= pocket_limit
             pocket = small[lab]
         tgt = (m & close) | pocket
         if not tgt.any():
@@ -365,7 +368,7 @@ def _fill_small_holes(m: np.ndarray, max_area: float) -> np.ndarray:
     small[1:] = stats[1:, cv2.CC_STAT_AREA] <= max_area
     return m | small[lab]
 
-def _sharpen_depth_edges(rgb: np.ndarray, d: np.ndarray, thr: float) -> np.ndarray:
+def _sharpen_depth_edges(rgb: np.ndarray, d: np.ndarray, thr: float, sky: np.ndarray | None = None, mask: np.ndarray | None = None) -> np.ndarray:
     """Turn blurred depth ramps at object borders into steps that follow the photo's edges,
     then regularise the dominant planes.
 
@@ -396,7 +399,8 @@ def _sharpen_depth_edges(rgb: np.ndarray, d: np.ndarray, thr: float) -> np.ndarr
                 out = np.where(zone, wm, out).astype(np.float32)
             except cv2.error:
                 pass
-    return regularize_planes(rgb, out)
+    regular = regularize_planes(rgb, out, sky=sky, mask=mask)
+    return regular if mask is None else np.where(mask, regular, d).astype(np.float32)
 
 
 def _broad_slopes(d: np.ndarray, r: int) -> np.ndarray:
@@ -541,14 +545,25 @@ def _despeckle(d: np.ndarray, thr: float, mask: np.ndarray | None = None, max_ar
 def _snap_inside(d: np.ndarray, fg: np.ndarray, r: int) -> np.ndarray:
     """Depth just inside a silhouette takes the nearer interior value (removes the ramp
     towards the background that monocular depth has at object borders)."""
-    core = _ero(fg, r)
-    ring = fg & ~core
-    if not core.any() or not ring.any():
-        return d.copy()
-    _, (iy, ix) = ndimage.distance_transform_edt(~core, return_indices=True)
-    # max(): only ever pulls border pixels and thin parts (ears, hair, fingers) forward to the
-    # body they belong to, so they cannot become steep "skirts" stretched by a camera move
-    return np.where(ring, np.maximum(d, d[iy, ix]), d).astype(np.float32)
+    out = d.astype(np.float32).copy()
+    labels, n = ndimage.label(fg, structure=np.ones((3, 3)))
+    # Erosion can delete a thin object's entire core. It must not then borrow
+    # depth from an unrelated, thicker person elsewhere in the photograph.
+    for k, slices in enumerate(ndimage.find_objects(labels), 1):
+        if slices is None:
+            continue
+        comp = labels[slices] == k
+        # Pad before erosion so a component bounding box is not treated as solid.
+        padded = np.pad(comp, r+1)
+        core = _ero(padded, r)[r+1:-r-1, r+1:-r-1]
+        if not core.any():
+            continue
+        _, (iy, ix) = ndimage.distance_transform_edt(~core, return_indices=True)
+        local = out[slices]
+        ring = comp & ~core
+        local[ring] = np.maximum(local[ring], local[iy[ring], ix[ring]])
+    return out
+
 
 def _near_side(d: np.ndarray, thr: float) -> tuple[np.ndarray, np.ndarray]:
     """Near-side pixels of every depth cut and the disparity of the surface hidden behind them."""
