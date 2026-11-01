@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lumen-engine"
+version = "1.5.0"
+description = "Local, offline image processing engine for Lumen Studio (face replacement, region swapping, single-image 3D reconstruction)."
+requires-python = ">=3.10,<3.13"
+license = { text = "MIT" }
+dependencies = [
+  "numpy>=1.26",
+  "scipy>=1.11",
+  "opencv-contrib-python-headless>=4.9",
+  "pillow>=10",
+  "onnxruntime>=1.17",
+  "mediapipe>=0.10.14",
+  "numba>=0.59",
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+gpu = ["onnxruntime-gpu>=1.17"]
+dev = ["pytest>=8", "httpx>=0.27", "scikit-image>=0.22"]
+
+[project.scripts]
+lumen-engine = "lumen_engine.server.main:main"
+
+[tool.setuptools.packages.find]
+include = ["lumen_engine*"]
+
+[tool.setuptools.package-data]
+"lumen_engine.face" = ["data/*.npz"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

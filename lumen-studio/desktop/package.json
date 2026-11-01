@@ -1,0 +1,46 @@
+{
+  "name": "lumen-studio",
+  "productName": "Lumen Studio",
+  "version": "1.5.0",
+  "description": "Local, offline face replacement, region swapping and single-image 3D reconstruction.",
+  "main": "main.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "studio.lumen.app",
+    "productName": "Lumen Studio",
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../frontend/dist",
+        "to": "ui"
+      },
+      {
+        "from": "../engine/dist/lumen-engine",
+        "to": "engine"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.photography",
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Graphics"
+    }
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8"
+  }
+}
